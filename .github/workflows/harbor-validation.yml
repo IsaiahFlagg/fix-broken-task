@@ -1,0 +1,71 @@
+name: Harbor validation artifacts
+
+on:
+  push:
+    branches:
+      - test-submission-file-save
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Harbor
+        run: uv tool install harbor==0.19.0
+
+      - name: Run oracle
+        run: |
+          harbor run -p ./task -a oracle
+          mv jobs oracle-jobs
+
+      - name: Run no-op agent
+        run: |
+          harbor run -p ./task --agent nop
+          mv jobs nop-jobs
+
+      - name: Collect verifier outputs
+        run: |
+          mkdir -p verifier-output/oracle verifier-output/nop
+
+          cp "$(find oracle-jobs -type f -path '*/verifier/reward.txt' -print -quit)" \
+            verifier-output/oracle/reward.txt
+          cp "$(find oracle-jobs -type f -path '*/verifier/ctrf.json' -print -quit)" \
+            verifier-output/oracle/ctrf.json
+
+          cp "$(find nop-jobs -type f -path '*/verifier/reward.txt' -print -quit)" \
+            verifier-output/nop/reward.txt
+          cp "$(find nop-jobs -type f -path '*/verifier/ctrf.json' -print -quit)" \
+            verifier-output/nop/ctrf.json
+
+          echo "=== ORACLE REWARD ==="
+          cat verifier-output/oracle/reward.txt
+          echo "=== ORACLE CTRF ==="
+          python -m json.tool verifier-output/oracle/ctrf.json
+
+          echo "=== NO-OP REWARD ==="
+          cat verifier-output/nop/reward.txt
+          echo "=== NO-OP CTRF ==="
+          python -m json.tool verifier-output/nop/ctrf.json
+
+          test "$(tr -d '[:space:]' < verifier-output/oracle/reward.txt)" = "1"
+          test "$(tr -d '[:space:]' < verifier-output/nop/reward.txt)" = "0"
+
+      - name: Upload verifier outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harbor-verifier-output
+          path: verifier-output
+          retention-days: 5
